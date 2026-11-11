@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import copy
+import os
+import sys
+import warnings
 from collections.abc import Mapping
 from typing import Any, cast
 
@@ -64,6 +68,7 @@ __all__ = [
     "reject_unrecoverable_terminal_state",
     "ensure_context_wrapper",
     "finalize_conversation_tracking",
+    "get_or_create_default_event_loop",
     "get_unsent_tool_call_ids_for_interrupted_state",
     "input_guardrails_triggered",
     "validate_output_guardrails_with_server_managed_conversation",
@@ -675,3 +680,37 @@ def resolve_processed_response(
     if processed_response is None and run_state is not None:
         return run_state._last_processed_response
     return processed_response
+
+
+_WINDOWS_EVENT_LOOP_POLICY_ENV_VAR = "OPENAI_AGENTS_WINDOWS_EVENT_LOOP_POLICY"
+
+
+def get_or_create_default_event_loop() -> asyncio.AbstractEventLoop:
+    """Resolve or construct the thread's default event loop with Windows policy overrides.
+
+    On Windows, Python defaults to `asyncio.ProactorEventLoop`, which binds an internal loopback
+    socket on `127.0.0.1`. In restricted or sandbox environments where local socket creation is
+    gated, setting `OPENAI_AGENTS_WINDOWS_EVENT_LOOP_POLICY=selector` allows falling back to
+    `asyncio.WindowsSelectorEventLoopPolicy`.
+    """
+    if sys.platform == "win32":
+        requested_policy = os.environ.get(_WINDOWS_EVENT_LOOP_POLICY_ENV_VAR, "").strip().lower()
+        if requested_policy in ("selector", "windows_selector", "1", "true"):
+            current_policy = asyncio.get_event_loop_policy()
+            if not isinstance(current_policy, asyncio.WindowsSelectorEventLoopPolicy):
+                asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
+    policy = asyncio.get_event_loop_policy()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        try:
+            default_loop = policy.get_event_loop()
+        except RuntimeError:
+            default_loop = policy.new_event_loop()
+            policy.set_event_loop(default_loop)
+
+    if default_loop.is_closed():
+        default_loop = policy.new_event_loop()
+        policy.set_event_loop(default_loop)
+
+    return default_loop

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import warnings
 from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
@@ -69,6 +68,7 @@ from .run_internal.agent_runner_helpers import (
     build_resumed_stream_debug_extra,
     ensure_context_wrapper,
     finalize_conversation_tracking,
+    get_or_create_default_event_loop,
     get_unsent_tool_call_ids_for_interrupted_state,
     input_guardrails_triggered,
     reject_unrecoverable_terminal_state,
@@ -2563,18 +2563,7 @@ class AgentRunner:
                 "AgentRunner.run_sync() cannot be called when an event loop is already running."
             )
 
-        policy = asyncio.get_event_loop_policy()
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", DeprecationWarning)
-            try:
-                default_loop = policy.get_event_loop()
-            except RuntimeError:
-                default_loop = policy.new_event_loop()
-                policy.set_event_loop(default_loop)
-
-        if default_loop.is_closed():
-            default_loop = policy.new_event_loop()
-            policy.set_event_loop(default_loop)
+        default_loop = get_or_create_default_event_loop()
 
         # We intentionally leave the default loop open even if we had to create one above. Session
         # instances and other helpers stash loop-bound primitives between calls and expect to find
